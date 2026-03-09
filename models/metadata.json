@@ -1,0 +1,28 @@
+{
+  "trained_at": "2026-03-09T15:19:12.001899",
+  "train_size": 4024,
+  "test_size": 1007,
+  "win_accuracy": 0.5163853028798411,
+  "win_auc": 0.5068360469397883,
+  "over_accuracy": 0.5292949354518371,
+  "over_auc": 0.5150926561969507,
+  "features": [
+    "win_pct_home",
+    "win_pct_away",
+    "win_pct_diff",
+    "team_era_home",
+    "team_era_away",
+    "era_diff",
+    "team_runs_per_game_home",
+    "team_runs_per_game_away",
+    "rpg_diff",
+    "home_home_win_pct",
+    "away_away_win_pct",
+    "home_recent_form",
+    "away_recent_form"
+  ],
+  "seasons": [
+    "2024",
+    "2025"
+  ]
+}
