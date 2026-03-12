@@ -28,7 +28,7 @@ app.add_middleware(
 )
 
 # 모델 로드
-MODEL_DIR = 'models'
+MODEL_DIR = 'models/MLB'
 
 # 재학습 상태 추적
 retrain_status = {
@@ -88,7 +88,7 @@ def run_retrain(min_games: int):
     try:
         # 학습 스크립트 실행
         result = subprocess.run(
-            ["python", "baseball_ai_model_training_v2.py", f"--min-games={min_games}"],
+            ["python", "baseball_ai_model_training_v4.py", "--league=MLB", f"--min-games={min_games}"],
             capture_output=True,
             text=True,
             timeout=600  # 10분 타임아웃
@@ -143,7 +143,7 @@ def push_models_to_github():
         subprocess.run(["git", "remote", "set-url", "origin", remote_url], check=True)
 
         # 모델 파일 add
-        subprocess.run(["git", "add", "models/"], check=True)
+        subprocess.run(["git", "add", "models/MLB/"], check=True)
 
         # 변경사항 있는지 확인
         status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
