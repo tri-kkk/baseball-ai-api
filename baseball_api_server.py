@@ -72,11 +72,12 @@ class PredictionResponse(BaseModel):
     grade: str
 
 class RetrainRequest(BaseModel):
-    secret: str  # 보안용 시크릿 키
-    min_games: Optional[int] = 100  # 최소 경기수 (기본 100개)
+    secret: str
+    min_games: Optional[int] = 20
+    league: Optional[str] = 'ALL'  # MLB / KBO / NPB / ALL
 
 
-def run_retrain(min_games: int):
+def run_retrain(min_games: int, league: str = "ALL"):
     """백그라운드 재학습 실행"""
     global retrain_status
 
@@ -87,7 +88,7 @@ def run_retrain(min_games: int):
     try:
         # 학습 스크립트 실행
         result = subprocess.run(
-            ["python", "baseball_ai_model_training_v4.py", "--league=MLB", f"--min-games={min_games}"],
+            ["python", "baseball_ai_model_training_v4.py", f"--league={league}", f"--min-games={min_games}"],
             capture_output=True,
             text=True,
             timeout=600  # 10분 타임아웃
@@ -253,7 +254,7 @@ def retrain(request: RetrainRequest, background_tasks: BackgroundTasks):
         }
 
     # 백그라운드 재학습 시작
-    background_tasks.add_task(run_retrain, request.min_games)
+    background_tasks.add_task(run_retrain, request.min_games, request.league or "ALL")
 
     return {
         "success": True,
