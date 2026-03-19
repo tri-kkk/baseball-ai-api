@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import joblib
 import numpy as np
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 import os
 import subprocess
 import threading
@@ -27,8 +27,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 모델 로드
-MODEL_DIR = 'models/MLB'
+# 리그별 모델 저장소
+SUPPORTED_LEAGUES = ['MLB', 'KBO', 'NPB']
+models = {}
 
 # 재학습 상태 추적
 retrain_status = {
@@ -38,31 +39,29 @@ retrain_status = {
 }
 
 def load_models():
-    """모델 파일 로드"""
-    global win_model, over_model, feature_columns
-    try:
-        win_model = joblib.load(os.path.join(MODEL_DIR, 'baseball_win_model.pkl'))
-        over_model = joblib.load(os.path.join(MODEL_DIR, 'baseball_over_model.pkl'))
-        feature_columns = joblib.load(os.path.join(MODEL_DIR, 'feature_columns.pkl'))
-        print("✅ 모델 로드 완료!")
-        return True
-    except Exception as e:
-        print(f"❌ 모델 로드 실패: {e}")
-        win_model = None
-        over_model = None
-        feature_columns = None
-        return False
+    """리그별 모델 파일 로드"""
+    global models
+    for league in SUPPORTED_LEAGUES:
+        model_dir = f'models/{league}'
+        try:
+            models[league] = {
+                'win_model': joblib.load(os.path.join(model_dir, 'baseball_win_model.pkl')),
+                'over_model': joblib.load(os.path.join(model_dir, 'baseball_over_model.pkl')),
+                'feature_columns': joblib.load(os.path.join(model_dir, 'feature_columns.pkl')),
+            }
+            print(f"✅ {league} 모델 로드 완료!")
+        except Exception as e:
+            print(f"⚠️ {league} 모델 로드 실패: {e}")
 
 print("🤖 모델 로딩 중...")
-win_model = None
-over_model = None
-feature_columns = None
+models = {}
 load_models()
 
 
 # 요청/응답 모델
 class PredictionRequest(BaseModel):
     features: Dict[str, float]
+    league: Optional[str] = 'MLB'  # MLB / KBO / NPB
 
 class PredictionResponse(BaseModel):
     home_win_prob: float
@@ -174,11 +173,11 @@ def root():
 
 @app.get("/health")
 def health_check():
-    models_loaded = win_model is not None and over_model is not None
+    loaded = {lg: lg in models for lg in SUPPORTED_LEAGUES}
     return {
-        "status": "healthy" if models_loaded else "error",
-        "models_loaded": models_loaded,
-        "features": len(feature_columns) if feature_columns else 0,
+        "status": "healthy" if any(loaded.values()) else "error",
+        "models_loaded": loaded,
+        "features": {lg: len(models[lg]['feature_columns']) for lg in models},
         "last_trained": retrain_status["last_trained"],
         "is_training": retrain_status["is_training"],
     }
@@ -186,10 +185,20 @@ def health_check():
 @app.post("/predict", response_model=PredictionResponse)
 def predict(request: PredictionRequest):
     try:
+        league = request.league or 'MLB'
+        if league not in models:
+            league = 'MLB'  # fallback
+
+        m = models[league]
+        win_model = m['win_model']
+        over_model = m['over_model']
+        feature_columns = m['feature_columns']
+
         if win_model is None or over_model is None:
             raise HTTPException(status_code=500, detail="Models not loaded")
 
-        X = np.array([[request.features[col] for col in feature_columns]])
+        # KBO/NPB는 투수 feature 없음 → 있는 feature만 사용
+        X = np.array([[request.features.get(col, 0.0) for col in feature_columns]])
 
         home_win_prob = float(win_model.predict_proba(X)[0][1])
         over_prob = float(over_model.predict_proba(X)[0][1])
