@@ -41,12 +41,13 @@ async def save_ai_pick_to_db(api_match_id: int, league: str, grade: str, confide
             "away_win_prob": round(away_win_prob * 100, 2),
         }
         async with httpx.AsyncClient() as client:
-            await client.patch(
+            res = await client.patch(
                 url,
                 headers=headers,
                 json=payload,
                 params={"api_match_id": f"eq.{api_match_id}"}
             )
+            print(f"📡 Supabase 응답: {res.status_code} {res.text[:200]}")
     except Exception as e:
         print(f"⚠️ DB 저장 실패 ({api_match_id}): {e}")
 
@@ -256,6 +257,9 @@ async def predict(request: PredictionRequest):
 
         # DB에 ai_pick 저장
         if request.match_id:
+            print(f"💾 DB 저장 시도: match_id={request.match_id}, grade={grade}")
+            print(f"🔑 SUPABASE_URL: {SUPABASE_URL[:30] if SUPABASE_URL else 'EMPTY'}")
+            print(f"🔑 SUPABASE_KEY: {'SET' if SUPABASE_KEY else 'EMPTY'}")
             await save_ai_pick_to_db(
                 api_match_id=request.match_id,
                 league=league,
@@ -264,6 +268,7 @@ async def predict(request: PredictionRequest):
                 home_win_prob=home_win_prob,
                 away_win_prob=1 - home_win_prob,
             )
+            print(f"✅ DB 저장 완료: match_id={request.match_id}")
 
         return PredictionResponse(
             home_win_prob=home_win_prob,
