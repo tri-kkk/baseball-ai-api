@@ -14,6 +14,41 @@ import subprocess
 import threading
 import json
 from datetime import datetime
+import httpx
+
+# Supabase 설정
+SUPABASE_URL = os.environ.get("NEXT_PUBLIC_SUPABASE_URL", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
+
+async def save_ai_pick_to_db(api_match_id: int, league: str, grade: str, confidence: str, home_win_prob: float, away_win_prob: float):
+    """예측 결과를 baseball_odds_latest에 저장"""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return
+    try:
+        url = f"{SUPABASE_URL}/rest/v1/baseball_odds_latest"
+        headers = {
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Content-Type": "application/json",
+            "Prefer": "resolution=merge-duplicates"
+        }
+        payload = {
+            "api_match_id": api_match_id,
+            "league": league,
+            "ai_pick": grade,
+            "ai_pick_confidence": confidence,
+            "home_win_prob": round(home_win_prob * 100, 2),
+            "away_win_prob": round(away_win_prob * 100, 2),
+        }
+        async with httpx.AsyncClient() as client:
+            await client.patch(
+                url,
+                headers=headers,
+                json=payload,
+                params={"api_match_id": f"eq.{api_match_id}"}
+            )
+    except Exception as e:
+        print(f"⚠️ DB 저장 실패 ({api_match_id}): {e}")
 
 # FastAPI 앱 생성
 app = FastAPI(title="Baseball AI Prediction API")
@@ -62,6 +97,7 @@ load_models()
 class PredictionRequest(BaseModel):
     features: Dict[str, float]
     league: Optional[str] = 'MLB'  # MLB / KBO / NPB
+    match_id: Optional[int] = None  # DB 저장용
 
 class PredictionResponse(BaseModel):
     home_win_prob: float
@@ -184,7 +220,7 @@ def health_check():
     }
 
 @app.post("/predict", response_model=PredictionResponse)
-def predict(request: PredictionRequest):
+async def predict(request: PredictionRequest):
     try:
         league = request.league or 'MLB'
         if league not in models:
@@ -217,6 +253,17 @@ def predict(request: PredictionRequest):
         else:
             grade = "PASS"
             confidence = "LOW"
+
+        # DB에 ai_pick 저장
+        if request.match_id:
+            await save_ai_pick_to_db(
+                api_match_id=request.match_id,
+                league=league,
+                grade=grade,
+                confidence=confidence,
+                home_win_prob=home_win_prob,
+                away_win_prob=1 - home_win_prob,
+            )
 
         return PredictionResponse(
             home_win_prob=home_win_prob,
