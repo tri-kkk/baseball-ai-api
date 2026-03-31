@@ -20,6 +20,30 @@ import httpx
 SUPABASE_URL = os.environ.get("NEXT_PUBLIC_SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 
+async def save_retrain_log(league: str, success: bool, games_used: int = 0, error_message: str = None, github_push: bool = False):
+    """재학습 결과를 Supabase에 저장"""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return
+    try:
+        url = f"{SUPABASE_URL}/rest/v1/baseball_retrain_logs"
+        headers = {
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "league": league,
+            "success": success,
+            "games_used": games_used,
+            "error_message": error_message,
+            "github_push": github_push,
+        }
+        async with httpx.AsyncClient() as client:
+            res = await client.post(url, headers=headers, json=payload)
+            print(f"📡 재학습 로그 저장: {res.status_code}")
+    except Exception as e:
+        print(f"⚠️ 재학습 로그 저장 실패: {e}")
+
 async def save_ai_pick_to_db(api_match_id: int, league: str, grade: str, confidence: str, home_win_prob: float, away_win_prob: float):
     """예측 결과를 baseball_odds_latest에 저장"""
     if not SUPABASE_URL or not SUPABASE_KEY:
@@ -116,11 +140,16 @@ class RetrainRequest(BaseModel):
 
 def run_retrain(min_games: int, league: str = "ALL"):
     """백그라운드 재학습 실행"""
+    import asyncio
     global retrain_status
 
     retrain_status["is_training"] = True
     retrain_status["last_result"] = None
-    print(f"🔄 재학습 시작... (min_games={min_games})")
+    print(f"🔄 재학습 시작... (min_games={min_games}, league={league})")
+
+    success = False
+    error_message = None
+    github_push_success = False
 
     try:
         # 학습 스크립트 실행
@@ -137,8 +166,9 @@ def run_retrain(min_games: int, league: str = "ALL"):
             # 모델 리로드 (새 모델 파일로 교체)
             load_models()
 
-            # GitHub push (Railway 자동 재배포 트리거)
+            # GitHub push (전체 리그 모델 포함)
             push_result = push_models_to_github()
+            github_push_success = push_result.get("success", False)
 
             retrain_status["last_trained"] = datetime.now().isoformat()
             retrain_status["last_result"] = {
@@ -146,20 +176,32 @@ def run_retrain(min_games: int, league: str = "ALL"):
                 "github_push": push_result,
                 "output": result.stdout[-500:] if result.stdout else "",
             }
+            success = True
             print("🚀 GitHub push 완료 - Railway 재배포 트리거됨")
         else:
-            print(f"❌ 재학습 실패: {result.stderr}")
+            error_message = result.stderr[-500:] if result.stderr else "Unknown error"
+            print(f"❌ 재학습 실패: {error_message}")
             retrain_status["last_result"] = {
                 "success": False,
-                "error": result.stderr[-500:] if result.stderr else "Unknown error",
+                "error": error_message,
             }
 
     except subprocess.TimeoutExpired:
-        retrain_status["last_result"] = {"success": False, "error": "Timeout (10min)"}
+        error_message = "Timeout (10min)"
+        retrain_status["last_result"] = {"success": False, "error": error_message}
     except Exception as e:
-        retrain_status["last_result"] = {"success": False, "error": str(e)}
+        error_message = str(e)
+        retrain_status["last_result"] = {"success": False, "error": error_message}
     finally:
         retrain_status["is_training"] = False
+        # Supabase에 결과 저장
+        asyncio.run(save_retrain_log(
+            league=league,
+            success=success,
+            games_used=min_games,
+            error_message=error_message,
+            github_push=github_push_success,
+        ))
 
 
 def push_models_to_github():
@@ -179,8 +221,8 @@ def push_models_to_github():
         remote_url = f"https://{github_token}@github.com/{github_repo}.git"
         subprocess.run(["git", "remote", "set-url", "origin", remote_url], check=True)
 
-        # 모델 파일 add
-        subprocess.run(["git", "add", "models/MLB/"], check=True)
+        # 모델 파일 add (전체 리그)
+        subprocess.run(["git", "add", "models/"], check=True)
 
         # 변경사항 있는지 확인
         status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
