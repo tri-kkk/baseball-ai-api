@@ -179,7 +179,7 @@ def run_retrain(min_games: int, league: str = "ALL"):
             success = True
             print("🚀 GitHub push 완료 - Railway 재배포 트리거됨")
         else:
-            error_message = result.stderr[-500:] if result.stderr else "Unknown error"
+            error_message = result.stderr[-500:] if result.stderr else result.stdout[-500:] if result.stdout else "Unknown error"
             print(f"❌ 재학습 실패: {error_message}")
             retrain_status["last_result"] = {
                 "success": False,
