@@ -42,12 +42,12 @@ LEAGUES_TO_TRAIN = ['MLB', 'KBO', 'NPB'] if LEAGUE == 'ALL' else [LEAGUE]
 # 2. 환경 설정
 # =======================
 
-load_dotenv('.env.local')
-SUPABASE_URL = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+load_dotenv('.env.local')  # fallback for local
+SUPABASE_URL = os.environ.get("NEXT_PUBLIC_SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY") or os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
 if not SUPABASE_URL or not SUPABASE_KEY:
-    print("오류: .env.local 파일에 Supabase 설정이 없습니다!")
+    print("오류: Supabase 환경변수가 설정되지 않았습니다!")
     exit(1)
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
