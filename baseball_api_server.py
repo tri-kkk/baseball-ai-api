@@ -251,6 +251,12 @@ def root():
         "status": "running"
     }
 
+@app.get("/files")
+def list_files():
+    import os
+    files = os.listdir(".")
+    return {"files": sorted(files)}
+
 @app.get("/health")
 def health_check():
     loaded = {lg: lg in models for lg in SUPPORTED_LEAGUES}
