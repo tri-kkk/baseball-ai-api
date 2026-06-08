@@ -205,43 +205,73 @@ def run_retrain(min_games: int, league: str = "ALL"):
 
 
 def push_models_to_github():
-    """학습된 모델 파일을 GitHub에 push"""
+    """학습된 모델 파일을 GitHub에 push.
+
+    주의: Railway(Nixpacks)는 코드를 git clone이 아니라 '스냅샷 복사'로 배포하므로
+    실행 컨테이너에는 .git 저장소가 없다. 따라서 현재 디렉터리에서 git 명령을
+    실행하면 'not a git repository'(exit 128)로 실패한다.
+    → 임시 디렉터리에 레포를 새로 clone하고, 학습된 models/ 를 그쪽으로 복사한 뒤
+      commit/push 하는 방식으로 .git 부재 문제를 우회한다.
+    """
+    import shutil
+    import tempfile
+
+    tmp_dir = None
     try:
         github_token = os.environ.get("GITHUB_TOKEN")
-        github_repo = os.environ.get("GITHUB_REPO")  # ex: username/baseball-ai-api
+        github_repo = os.environ.get("GITHUB_REPO")  # ex: tri-kkk/baseball-ai-api
 
         if not github_token or not github_repo:
             return {"success": False, "error": "GITHUB_TOKEN or GITHUB_REPO not set"}
 
-        # git 설정
-        subprocess.run(["git", "config", "user.email", "auto-retrain@trendsoccer.com"], check=True)
-        subprocess.run(["git", "config", "user.name", "TrendSoccer AutoTrain"], check=True)
+        if not os.path.isdir("models"):
+            return {"success": False, "error": "models/ 디렉터리 없음 (학습 산출물 누락)"}
 
-        # remote URL에 토큰 포함
-        remote_url = f"https://{github_token}@github.com/{github_repo}.git"
-        subprocess.run(["git", "remote", "set-url", "origin", remote_url], check=True)
+        remote_url = f"https://x-access-token:{github_token}@github.com/{github_repo}.git"
 
-        # 모델 파일 add (전체 리그)
-        subprocess.run(["git", "add", "models/"], check=True)
+        tmp_dir = tempfile.mkdtemp(prefix="model-push-")
+        repo_dir = os.path.join(tmp_dir, "repo")
 
-        # 변경사항 있는지 확인
-        status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
+        def run(args):
+            return subprocess.run(args, check=True, capture_output=True, text=True)
+
+        # 1) 최신 main만 얕게 clone (모델 갱신만 필요)
+        run(["git", "clone", "--depth", "1", "--branch", "main", remote_url, repo_dir])
+
+        # 2) clone된 레포 안에서 사용자 설정
+        run(["git", "-C", repo_dir, "config", "user.email", "auto-retrain@trendsoccer.com"])
+        run(["git", "-C", repo_dir, "config", "user.name", "TrendSoccer AutoTrain"])
+
+        # 3) 학습된 models/ 를 clone 레포로 통째 복사 (기존 모델 폴더 교체)
+        dst_models = os.path.join(repo_dir, "models")
+        if os.path.isdir(dst_models):
+            shutil.rmtree(dst_models)
+        shutil.copytree("models", dst_models)
+
+        # 4) 변경사항 확인
+        run(["git", "-C", repo_dir, "add", "models/"])
+        status = subprocess.run(
+            ["git", "-C", repo_dir, "status", "--porcelain"],
+            capture_output=True, text=True,
+        )
         if not status.stdout.strip():
             return {"success": True, "message": "No changes to push"}
 
-        # commit & push
+        # 5) commit & push
         commit_msg = f"Auto-retrain: {datetime.now().strftime('%Y-%m-%d %H:%M')} KST"
-        subprocess.run(["git", "commit", "-m", commit_msg], check=True)
-        subprocess.run(["git", "push", "origin", "main"], check=True)
+        run(["git", "-C", repo_dir, "commit", "-m", commit_msg])
+        run(["git", "-C", repo_dir, "push", "origin", "HEAD:main"])
 
         return {"success": True, "message": commit_msg}
 
     except subprocess.CalledProcessError as e:
-        return {"success": False, "error": str(e)}
+        detail = (e.stderr or "").strip() if hasattr(e, "stderr") else ""
+        return {"success": False, "error": f"{e} | {detail}"}
     except Exception as e:
         return {"success": False, "error": str(e)}
-
-
+    finally:
+        if tmp_dir:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 # API 엔드포인트
 @app.get("/")
 def root():
