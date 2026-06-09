@@ -154,7 +154,7 @@ def run_retrain(min_games: int, league: str = "ALL"):
     try:
         # 학습 스크립트 실행
         result = subprocess.run(
-            ["python", "baseball_ai_model_training_v4.py", f"--league={league}", f"--min-games={min_games}"],
+            ["python", "baseball_ai_model_training_v5.py", f"--league={league}", f"--min-games={min_games}"],
             capture_output=True,
             text=True,
             timeout=600  # 10분 타임아웃
