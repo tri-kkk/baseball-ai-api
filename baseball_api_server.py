@@ -13,14 +13,40 @@ import os
 import subprocess
 import threading
 import json
+import re
 from datetime import datetime
 import httpx
+
+
+def parse_aucs(stdout: str) -> dict:
+    """학습 stdout에서 리그별 승부/총점 AUC 파싱.
+
+    학습 스크립트의 요약 라인 형식 예:
+      "  MLB (투수 포함): 승부 AUC 0.587 (양호) | 총점 AUC 0.542"
+    파싱 실패해도 빈 dict를 반환해 로깅을 막지 않는다.
+    """
+    aucs = {}
+    if not stdout:
+        return aucs
+    pattern = re.compile(
+        r"(MLB|KBO|NPB).*?승부\s*AUC\s*([\d.]+).*?총점\s*AUC\s*([\d.]+)"
+    )
+    for m in pattern.finditer(stdout):
+        league = m.group(1)
+        try:
+            aucs[league] = {
+                "win": round(float(m.group(2)), 3),
+                "over": round(float(m.group(3)), 3),
+            }
+        except ValueError:
+            continue
+    return aucs
 
 # Supabase 설정
 SUPABASE_URL = os.environ.get("NEXT_PUBLIC_SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 
-async def save_retrain_log(league: str, success: bool, games_used: int = 0, error_message: str = None, github_push: bool = False):
+async def save_retrain_log(league: str, success: bool, games_used: int = 0, error_message: str = None, github_push: bool = False, aucs: dict = None):
     """재학습 결과를 Supabase에 저장"""
     if not SUPABASE_URL or not SUPABASE_KEY:
         return
@@ -37,6 +63,7 @@ async def save_retrain_log(league: str, success: bool, games_used: int = 0, erro
             "games_used": games_used,
             "error_message": error_message,
             "github_push": github_push,
+            "aucs": aucs or {},
         }
         async with httpx.AsyncClient() as client:
             res = await client.post(url, headers=headers, json=payload)
@@ -150,6 +177,7 @@ def run_retrain(min_games: int, league: str = "ALL"):
     success = False
     error_message = None
     github_push_success = False
+    aucs = {}
 
     try:
         # 학습 스크립트 실행
@@ -157,7 +185,7 @@ def run_retrain(min_games: int, league: str = "ALL"):
             ["python", "baseball_ai_model_training_v5.py", f"--league={league}", f"--min-games={min_games}"],
             capture_output=True,
             text=True,
-            timeout=600  # 10분 타임아웃
+            timeout=900  # 15분 타임아웃 (6/17·6/19 학습 10분 초과 실패 대응)
         )
 
         if result.returncode == 0:
@@ -170,10 +198,14 @@ def run_retrain(min_games: int, league: str = "ALL"):
             push_result = push_models_to_github()
             github_push_success = push_result.get("success", False)
 
+            # 학습 출력에서 리그별 AUC 파싱 (실패해도 무시)
+            aucs = parse_aucs(result.stdout)
+
             retrain_status["last_trained"] = datetime.now().isoformat()
             retrain_status["last_result"] = {
                 "success": True,
                 "github_push": push_result,
+                "aucs": aucs,
                 "output": result.stdout[-500:] if result.stdout else "",
             }
             success = True
@@ -187,7 +219,7 @@ def run_retrain(min_games: int, league: str = "ALL"):
             }
 
     except subprocess.TimeoutExpired:
-        error_message = "Timeout (10min)"
+        error_message = "Timeout (15min)"
         retrain_status["last_result"] = {"success": False, "error": error_message}
     except Exception as e:
         error_message = str(e)
@@ -201,6 +233,7 @@ def run_retrain(min_games: int, league: str = "ALL"):
             games_used=min_games,
             error_message=error_message,
             github_push=github_push_success,
+            aucs=aucs,
         ))
 
 
