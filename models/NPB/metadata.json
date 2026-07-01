@@ -1,5 +1,5 @@
 {
-  "trained_at": "2026-07-01T02:03:01.136947",
+  "trained_at": "2026-07-01T05:54:51.266743",
   "version": "v5",
   "league": "NPB",
   "over_line": 8.5,
@@ -44,8 +44,10 @@
     "pitcher_k_diff"
   ],
   "pitcher_features_included": true,
+  "win_train_start": "2022-03-25",
   "train_size": 3260,
   "test_size": 815,
+  "over_train_size": 3260,
   "win_accuracy": 0.5276073619631901,
   "win_auc": 0.50456447547725,
   "over_accuracy": 0.6576687116564417,
