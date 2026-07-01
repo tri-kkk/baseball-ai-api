@@ -38,6 +38,17 @@ OVER_LINE = {'MLB': 9.0, 'KBO': 8.5, 'NPB': 8.5}
 REGULAR_SEASON_START = {'MLB': '2024-03-28', 'KBO': '2022-04-01', 'NPB': '2022-03-25'}
 LEAGUES_TO_TRAIN = ['MLB', 'KBO', 'NPB'] if LEAGUE == 'ALL' else [LEAGUE]
 
+# 승부(win) 모델 전용 학습 시작일 (리그별).
+# 지정된 리그는 win 모델을 이 날짜 이후 데이터로만 학습한다.
+# 배경: KBO 선발투수 데이터는 2026년부터만 존재 -> 전체연도(2022~) 학습 시
+#       학습구간(2022~2025)에서 투수 피처가 전부 결측->기본값(상수)이라 모델이 무시(중요도 0.00).
+#       2026-only로 학습하면 투수 피처가 살아나 승부 AUC 0.51->0.54로 개선(시계열 4-fold CV, 2026-07 검증).
+#       데이터 로드/롤링피처는 전체 이력으로 계산하므로 form 품질은 유지되고, 학습 대상 행만 필터한다.
+# 주의: over(총점) 모델은 2026-only에서 오히려 소폭 하락(0.496->0.482)하므로 전체연도 유지.
+#       NPB는 투수 커버리지 69%로 효과 미미(+0.01)라 백필 전까지 현행(전체연도) 유지.
+WIN_TRAIN_START = {'KBO': '2026-01-01'}
+WIN_TRAIN_MIN_ROWS = 150  # 필터 후 행이 이보다 적으면 안전하게 전체연도로 폴백
+
 # =======================
 # 2. 환경 설정
 # =======================
@@ -385,35 +396,48 @@ def train_league(league: str):
     print(f"학습 데이터: {len(df_model)}개 | 홈승률: {df_model['home_win'].mean():.1%}")
     print(f"사용 feature: {len(feature_columns)}개 (투수 포함)")
 
-    X = df_model[feature_columns].fillna(0)
-    y_win = df_model['home_win']
+    # 승부(win) 모델: 리그별 시작일 필터 적용 (없으면 전체연도)
+    # 총점(over) 모델: 항상 전체연도
+    win_start = WIN_TRAIN_START.get(league)
+    df_win = df_model
+    if win_start:
+        filtered = df_model[df_model['match_date'] >= pd.Timestamp(win_start)]
+        if len(filtered) >= WIN_TRAIN_MIN_ROWS:
+            df_win = filtered.copy()
+            print(f"  [승부모델] {league} 전용 학습구간 {win_start}~ 적용 -> {len(df_win)}개 (투수 피처 활성)")
+        else:
+            print(f"  [승부모델] {league} 필터 후 {len(filtered)}개 < {WIN_TRAIN_MIN_ROWS} -> 전체연도로 폴백")
+
+    X_win = df_win[feature_columns].fillna(0)
+    y_win = df_win['home_win']
+    X_over = df_model[feature_columns].fillna(0)
     y_over = df_model['over']
 
-    X_train, X_test, y_win_train, y_win_test = train_test_split(
-        X, y_win, test_size=0.2, random_state=42, shuffle=False
+    Xw_train, Xw_test, y_win_train, y_win_test = train_test_split(
+        X_win, y_win, test_size=0.2, random_state=42, shuffle=False
     )
-    _, _, y_over_train, y_over_test = train_test_split(
-        X, y_over, test_size=0.2, random_state=42, shuffle=False
+    Xo_train, Xo_test, y_over_train, y_over_test = train_test_split(
+        X_over, y_over, test_size=0.2, random_state=42, shuffle=False
     )
 
-    print(f"학습: {len(X_train)}개 / 검증: {len(X_test)}개")
+    print(f"승부 학습: {len(Xw_train)}/{len(Xw_test)}  |  총점 학습: {len(Xo_train)}/{len(Xo_test)}")
 
     win_model = GradientBoostingClassifier(
         n_estimators=300, learning_rate=0.05, max_depth=4,
         subsample=0.8, min_samples_leaf=20, random_state=42
     )
-    win_model.fit(X_train, y_win_train)
+    win_model.fit(Xw_train, y_win_train)
 
     over_model = GradientBoostingClassifier(
         n_estimators=300, learning_rate=0.05, max_depth=4,
         subsample=0.8, min_samples_leaf=20, random_state=42
     )
-    over_model.fit(X_train, y_over_train)
+    over_model.fit(Xo_train, y_over_train)
 
-    win_auc = roc_auc_score(y_win_test, win_model.predict_proba(X_test)[:, 1])
-    win_acc = accuracy_score(y_win_test, win_model.predict(X_test))
-    over_auc = roc_auc_score(y_over_test, over_model.predict_proba(X_test)[:, 1])
-    over_acc = accuracy_score(y_over_test, over_model.predict(X_test))
+    win_auc = roc_auc_score(y_win_test, win_model.predict_proba(Xw_test)[:, 1])
+    win_acc = accuracy_score(y_win_test, win_model.predict(Xw_test))
+    over_auc = roc_auc_score(y_over_test, over_model.predict_proba(Xo_test)[:, 1])
+    over_acc = accuracy_score(y_over_test, over_model.predict(Xo_test))
 
     print(f"승부 예측 - 정확도: {win_acc:.2%}  AUC: {win_auc:.3f}")
     print(f"총점 예측 - 정확도: {over_acc:.2%}  AUC: {over_auc:.3f}")
@@ -442,8 +466,10 @@ def train_league(league: str):
         'window': WINDOW,
         'features': feature_columns,
         'pitcher_features_included': True,
-        'train_size': len(X_train),
-        'test_size': len(X_test),
+        'win_train_start': win_start or REGULAR_SEASON_START.get(league),
+        'train_size': len(Xw_train),
+        'test_size': len(Xw_test),
+        'over_train_size': len(Xo_train),
         'win_accuracy': float(win_acc),
         'win_auc': float(win_auc),
         'over_accuracy': float(over_acc),
