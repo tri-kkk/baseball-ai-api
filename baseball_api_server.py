@@ -145,6 +145,49 @@ models = {}
 load_models()
 
 
+def restore_retrain_status():
+    """앱 시작 시 Supabase 최신 재학습 로그로 retrain_status 복원.
+
+    Railway는 재배포/재시작마다 컨테이너가 새로 뜨므로 메모리에만 있던
+    retrain_status 가 초기화된다. 그러면 /retrain/status 가 last_trained=null 을
+    반환해 모니터링이 매번 '기록 없음'으로 보인다.
+    → baseball_retrain_logs(영속) 최신 행을 읽어 메모리 상태를 복구한다.
+    실패해도 서버 기동을 막지 않도록 예외를 모두 무시한다.
+    """
+    global retrain_status
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return
+    try:
+        url = f"{SUPABASE_URL}/rest/v1/baseball_retrain_logs"
+        headers = {
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+        }
+        params = {"select": "*", "order": "trained_at.desc", "limit": "1"}
+        with httpx.Client(timeout=15) as client:
+            res = client.get(url, headers=headers, params=params)
+        rows = res.json() if res.status_code == 200 else []
+        if not rows:
+            print("ℹ️ 복원할 재학습 로그 없음")
+            return
+        row = rows[0]
+        retrain_status["last_trained"] = row.get("trained_at")
+        retrain_status["last_result"] = {
+            "success": row.get("success"),
+            "github_push": {"success": row.get("github_push")},
+            "aucs": row.get("aucs") or {},
+            "error": row.get("error_message"),
+            "restored_from_log": True,  # 라이브 결과가 아니라 DB에서 복원됐음을 표시
+        }
+        print(f"♻️ 재학습 상태 복원: last_trained={row.get('trained_at')}, "
+              f"success={row.get('success')}, github_push={row.get('github_push')}")
+    except Exception as e:
+        print(f"⚠️ 재학습 상태 복원 실패(무시): {e}")
+
+
+restore_retrain_status()
+
+
 # 요청/응답 모델
 class PredictionRequest(BaseModel):
     features: Dict[str, float]
