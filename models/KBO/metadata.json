@@ -1,5 +1,5 @@
 {
-  "trained_at": "2026-07-19T18:02:28.643668",
+  "trained_at": "2026-07-20T18:03:21.627458",
   "version": "v5",
   "league": "KBO",
   "over_line": 8.5,
@@ -50,8 +50,8 @@
   "over_train_size": 2757,
   "win_accuracy": 0.5050505050505051,
   "win_auc": 0.5249169435215946,
-  "over_accuracy": 0.5478260869565217,
-  "over_auc": 0.5386890243902439,
+  "over_accuracy": 0.5362318840579711,
+  "over_auc": 0.5179921602787456,
   "inning_coverage": 1.0,
   "pitcher_coverage": 0.13985611510791368
 }
