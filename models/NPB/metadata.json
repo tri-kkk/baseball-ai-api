@@ -1,5 +1,5 @@
 {
-  "trained_at": "2026-07-22T18:02:36.893340",
+  "trained_at": "2026-07-23T18:02:50.269600",
   "version": "v5",
   "league": "NPB",
   "over_line": 8.5,
@@ -45,13 +45,13 @@
   ],
   "pitcher_features_included": true,
   "win_train_start": "2022-03-25",
-  "train_size": 3344,
-  "test_size": 836,
-  "over_train_size": 3344,
-  "win_accuracy": 0.5,
-  "win_auc": 0.5039699601570786,
-  "over_accuracy": 0.6650717703349283,
-  "over_auc": 0.5203253100693714,
+  "train_size": 3346,
+  "test_size": 837,
+  "over_train_size": 3346,
+  "win_accuracy": 0.48984468339307047,
+  "win_auc": 0.48353935346651267,
+  "over_accuracy": 0.6606929510155317,
+  "over_auc": 0.5368156155059783,
   "inning_coverage": 1.0,
-  "pitcher_coverage": 0.10887096774193548
+  "pitcher_coverage": 0.10950462194832898
 }
