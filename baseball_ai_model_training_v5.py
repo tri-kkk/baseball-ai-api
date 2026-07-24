@@ -49,6 +49,17 @@ LEAGUES_TO_TRAIN = ['MLB', 'KBO', 'NPB'] if LEAGUE == 'ALL' else [LEAGUE]
 WIN_TRAIN_START = {'KBO': '2026-01-01'}
 WIN_TRAIN_MIN_ROWS = 150  # 필터 후 행이 이보다 적으면 안전하게 전체연도로 폴백
 
+# 승부(win) 모델 전용 홀드아웃 비율 (리그별, 기본 0.2).
+# 배경(NPB, 2026-07-24 실측): NPB 투수 데이터는 2026년만 존재(2026 커버리지 73%, 4월 이후 94%+).
+#       기존 80/20 시계열 분할은 2026년 전체가 검증셋에 묶여 학습에 못 들어감
+#       -> 학습구간 투수 피처 전부 상수 -> 중요도 0.00 -> 승부 AUC 0.48~0.50 정체.
+#       공통 평가셋(최근 127경기) 비교: 현행 80/20 = 0.502 / 2026-only = 0.524 /
+#       홀드아웃 5%(최근 데이터 학습 포함) = 0.551, 직전 구간 검증에서도 현행 대비 +0.05.
+#       2026-only 전환(KBO 방식)은 NPB는 행수 부족(~500)으로 오히려 불리해 채택 안 함.
+# 효과: 매일 재학습 시 최신 경기가 곧바로 학습에 유입되어 투수 신호가 살아나고 자동 개선됨.
+# 주의: over(총점) 모델 분할은 기존(0.2) 유지.
+WIN_TEST_SIZE = {'NPB': 0.05}
+
 # =======================
 # 2. 환경 설정
 # =======================
@@ -413,8 +424,11 @@ def train_league(league: str):
     X_over = df_model[feature_columns].fillna(0)
     y_over = df_model['over']
 
+    win_test_size = WIN_TEST_SIZE.get(league, 0.2)
+    if win_test_size != 0.2:
+        print(f"  [승부모델] {league} 홀드아웃 {win_test_size:.0%} 적용 (최신 데이터 학습 포함)")
     Xw_train, Xw_test, y_win_train, y_win_test = train_test_split(
-        X_win, y_win, test_size=0.2, random_state=42, shuffle=False
+        X_win, y_win, test_size=win_test_size, random_state=42, shuffle=False
     )
     Xo_train, Xo_test, y_over_train, y_over_test = train_test_split(
         X_over, y_over, test_size=0.2, random_state=42, shuffle=False
@@ -467,6 +481,7 @@ def train_league(league: str):
         'features': feature_columns,
         'pitcher_features_included': True,
         'win_train_start': win_start or REGULAR_SEASON_START.get(league),
+        'win_test_size': win_test_size,
         'train_size': len(Xw_train),
         'test_size': len(Xw_test),
         'over_train_size': len(Xo_train),
