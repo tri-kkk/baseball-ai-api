@@ -11,7 +11,7 @@ Baseball AI 예측 모델 학습 스크립트 v5
 
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, TimeSeriesSplit
 from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.metrics import accuracy_score, roc_auc_score
 import joblib
@@ -45,20 +45,20 @@ LEAGUES_TO_TRAIN = ['MLB', 'KBO', 'NPB'] if LEAGUE == 'ALL' else [LEAGUE]
 #       2026-only로 학습하면 투수 피처가 살아나 승부 AUC 0.51->0.54로 개선(시계열 4-fold CV, 2026-07 검증).
 #       데이터 로드/롤링피처는 전체 이력으로 계산하므로 form 품질은 유지되고, 학습 대상 행만 필터한다.
 # 주의: over(총점) 모델은 2026-only에서 오히려 소폭 하락(0.496->0.482)하므로 전체연도 유지.
-#       NPB는 투수 커버리지 69%로 효과 미미(+0.01)라 백필 전까지 현행(전체연도) 유지.
-WIN_TRAIN_START = {'KBO': '2026-01-01'}
+# NPB 추가(2026-07-29): NPB 투수 데이터도 2026년만 존재(2022~2025 커버리지 0%).
+#       전체연도 학습 시 학습행의 ~89%가 투수=상수 기본값이라 신호가 희석되어 승부 AUC ~0.495 정체.
+#       2026 경기 누적이 614행(>WIN_TRAIN_MIN_ROWS)에 도달 -> 2026-only 전환.
+#       실측(시계열 5-fold CV): 전체연도 ~0.495 -> 2026-only 0.531, 투수 피처 중요도 30.5%로 활성.
+WIN_TRAIN_START = {'KBO': '2026-01-01', 'NPB': '2026-01-01'}
 WIN_TRAIN_MIN_ROWS = 150  # 필터 후 행이 이보다 적으면 안전하게 전체연도로 폴백
 
 # 승부(win) 모델 전용 홀드아웃 비율 (리그별, 기본 0.2).
-# 배경(NPB, 2026-07-24 실측): NPB 투수 데이터는 2026년만 존재(2026 커버리지 73%, 4월 이후 94%+).
-#       기존 80/20 시계열 분할은 2026년 전체가 검증셋에 묶여 학습에 못 들어감
-#       -> 학습구간 투수 피처 전부 상수 -> 중요도 0.00 -> 승부 AUC 0.48~0.50 정체.
-#       공통 평가셋(최근 127경기) 비교: 현행 80/20 = 0.502 / 2026-only = 0.524 /
-#       홀드아웃 5%(최근 데이터 학습 포함) = 0.551, 직전 구간 검증에서도 현행 대비 +0.05.
-#       2026-only 전환(KBO 방식)은 NPB는 행수 부족(~500)으로 오히려 불리해 채택 안 함.
-# 효과: 매일 재학습 시 최신 경기가 곧바로 학습에 유입되어 투수 신호가 살아나고 자동 개선됨.
+# 이력(NPB, 2026-07-24): 전체연도 학습을 유지하면서 2026 경기를 학습에 넣기 위해 홀드아웃을
+#       5%로 낮추는 임시 방편을 썼음. 하지만 여전히 학습행 대부분이 투수=상수라 AUC ~0.495 정체.
+# 변경(2026-07-29): NPB를 2026-only(WIN_TRAIN_START)로 전환하면서 5% 방편은 불필요 ->
+#       KBO와 동일하게 기본 0.2 홀드아웃 사용. 품질 판정은 아래 시계열 K-fold CV(win_auc_cv) 기준.
 # 주의: over(총점) 모델 분할은 기존(0.2) 유지.
-WIN_TEST_SIZE = {'NPB': 0.05}
+WIN_TEST_SIZE = {}
 
 # =======================
 # 2. 환경 설정
@@ -453,8 +453,32 @@ def train_league(league: str):
     over_auc = roc_auc_score(y_over_test, over_model.predict_proba(Xo_test)[:, 1])
     over_acc = accuracy_score(y_over_test, over_model.predict(Xo_test))
 
-    print(f"승부 예측 - 정확도: {win_acc:.2%}  AUC: {win_auc:.3f}")
+    print(f"승부 예측 - 정확도: {win_acc:.2%}  AUC(단일홀드아웃): {win_auc:.3f}")
     print(f"총점 예측 - 정확도: {over_acc:.2%}  AUC: {over_auc:.3f}")
+
+    # 시계열 K-fold CV 로 승부 AUC 안정 추정.
+    # 단일 홀드아웃(90~200경기)은 표준오차가 커 매 재학습마다 0.2 이상 요동친다.
+    # 5-fold 시계열 CV 평균을 품질 지표(win_auc_cv)로 삼아 진짜 추세를 본다.
+    win_auc_cv = None
+    try:
+        cv_scores = []
+        for tr_idx, te_idx in TimeSeriesSplit(n_splits=5).split(X_win):
+            if y_win.iloc[tr_idx].nunique() < 2 or y_win.iloc[te_idx].nunique() < 2:
+                continue
+            cv_m = GradientBoostingClassifier(
+                n_estimators=300, learning_rate=0.05, max_depth=4,
+                subsample=0.8, min_samples_leaf=20, random_state=42
+            )
+            cv_m.fit(X_win.iloc[tr_idx], y_win.iloc[tr_idx])
+            cv_scores.append(
+                roc_auc_score(y_win.iloc[te_idx], cv_m.predict_proba(X_win.iloc[te_idx])[:, 1])
+            )
+        if cv_scores:
+            win_auc_cv = float(np.mean(cv_scores))
+            folds = [round(s, 3) for s in cv_scores]
+            print(f"승부 예측 - 시계열 5-fold CV AUC(안정지표): {win_auc_cv:.3f}  folds={folds}")
+    except Exception as e:
+        print(f"  CV 계산 스킵: {e}")
 
     print(f"\nFeature Importance 상위 10개:")
     fi = pd.DataFrame({
@@ -487,6 +511,7 @@ def train_league(league: str):
         'over_train_size': len(Xo_train),
         'win_accuracy': float(win_acc),
         'win_auc': float(win_auc),
+        'win_auc_cv': win_auc_cv,
         'over_accuracy': float(over_acc),
         'over_auc': float(over_auc),
         'inning_coverage': float(inning_coverage),
@@ -517,5 +542,7 @@ for league in LEAGUES_TO_TRAIN:
 print(f"\n{'='*50}")
 print(f"전체 완료: {datetime.now()}")
 for league, meta in results.items():
-    quality = "양호" if meta['win_auc'] > 0.55 else "보통" if meta['win_auc'] > 0.52 else "미흡"
-    print(f"  {league} (투수 포함): 승부 AUC {meta['win_auc']:.3f} ({quality}) | 총점 AUC {meta['over_auc']:.3f}")
+    # 품질/로그 지표는 안정적인 시계열 CV(win_auc_cv) 우선, 없으면 단일 홀드아웃으로 폴백
+    win_metric = meta.get('win_auc_cv') or meta['win_auc']
+    quality = "양호" if win_metric > 0.55 else "보통" if win_metric > 0.52 else "미흡"
+    print(f"  {league} (투수 포함): 승부 AUC {win_metric:.3f} ({quality}) | 총점 AUC {meta['over_auc']:.3f}")
