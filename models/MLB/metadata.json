@@ -1,5 +1,5 @@
 {
-  "trained_at": "2026-09-27T18:01:53.583780",
+  "trained_at": "2026-09-28T18:02:14.456174",
   "version": "v5",
   "league": "MLB",
   "over_line": 9.0,
@@ -46,14 +46,14 @@
   "pitcher_features_included": true,
   "win_train_start": "2024-03-28",
   "win_test_size": 0.2,
-  "train_size": 6067,
-  "test_size": 1517,
-  "over_train_size": 6067,
-  "win_accuracy": 0.5774555042847725,
-  "win_auc": 0.6008993802063192,
-  "win_auc_cv": 0.5593312672283834,
-  "over_accuracy": 0.5932762030323006,
-  "over_auc": 0.5799684855033316,
+  "train_size": 6078,
+  "test_size": 1520,
+  "over_train_size": 6078,
+  "win_accuracy": 0.5848684210526316,
+  "win_auc": 0.591542387037066,
+  "win_auc_cv": 0.5551548485659906,
+  "over_accuracy": 0.6072368421052632,
+  "over_auc": 0.5795373735777497,
   "inning_coverage": 1.0,
-  "pitcher_coverage": 0.9494132985658409
+  "pitcher_coverage": 0.9497657470067673
 }
